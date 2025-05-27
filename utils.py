@@ -1,11 +1,15 @@
 import sys
+import itertools
+import shutil
 import glob
 import copy
 import re
 import os
+import gc
 import sqlite3
 import torch
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, Value, load_from_disk, Features, Sequence
+from huggingface_hub import create_repo
 #from lingua import LanguageDetectorBuilder
 from multiprocessing import Process, Queue, cpu_count
 from multiprocessing import Pool
@@ -32,6 +36,25 @@ stop_after_attempt,
 )
 import hashlib
 import os
+# At the top-level of your file:
+
+
+def check_record(record, features, path=""):
+    if isinstance(features, Features):
+        assert isinstance(record, dict), f"Expected dict at {path}, got {type(record)}"
+        for key in record:
+            if key not in features:
+                print (record[key])
+                raise AssertionError(f"Unexpected key '{path + key}' found in record but missing in features.")
+            check_record(record[key], features[key], path=f"{path}{key}.")
+    elif isinstance(features, Sequence) or isinstance(features, list):
+        assert isinstance(record, list), f"Expected list at {path}, got {type(record)}"
+        for idx, item in enumerate(record):
+            check_record(item, features.feature if hasattr(features, 'feature') else features[0], path=f"{path}[{idx}].")
+    elif isinstance(features, Value):
+        pass
+    else:
+        raise AssertionError(f"Unhandled schema type at {path}: {features}")
 
 def hash_ip_with_salt(ip_address, salt):
     """Hashes an IP address with a given salt using SHA-256."""
@@ -594,35 +617,107 @@ def push_dataset(save_name):
         return int(m.group(1)) if m else None
     files = sorted(files, key=chunk_index)
     filtered_records = []
-    cutoff_timestamp = datetime(2025, 5, 1)  # filter out from June 2025 onwards
+    cutoff = datetime(2025, 5, 1)  # filter out from June 2025 onwards
+    # explicit schema for nested structs
+    features = Features({
+    'model':              Value('string'),
+    'timestamp':          Value('timestamp[us]'),
+    'conversation':       [Features({
+        'content':          Value('string'),
+        'created':          Value('int64'),
+        'header':           Features({
+            'accept-language': Value('string'),
+            'user-agent':      Value('string'),
+        }),
+        'ip':               Value('string'),
+        'language':         Value('string'),
+        'openai_id':        Value('string'),
+        'role':             Value('string'),
+        'temperature':      Value('float64'),
+        'timestamp':        Value('timestamp[us]'),
+        'token_counter':    Value('int64'),
+        'top_p':            Value('float64'),
+        'turn_identifier':  Value('int64'),
+        'system_fingerprint': Value('string'),
+        'usage': Features({
+            'completion_tokens':         Value('int64'),
+            'completion_tokens_details': Features({
+                'reasoning_tokens': Value('int64'),
+                'text_tokens': Value('int64'),
+                'audio_tokens': Value('int64'),
+                'accepted_prediction_tokens': Value('int64'),
+                'rejected_prediction_tokens': Value('int64')
+            }),
+            'prompt_tokens':             Value('int64'),
+            'total_tokens':              Value('int64'),
+            'prompt_tokens_details': Features({
+                'cached_tokens': Value('int64'),
+                'audio_tokens': Value('int64'),
+            }),
+        }),
+    })],
+    'turn':               Value('int64'),
+    'ip':                 Value('string'),
+    'device_fingerprint': Value('string'),
+    'header':             Features({
+        'accept-language': Value('string'),
+        'user-agent':      Value('string'),
+    }),
+    'language':           Value('string'),
+})
 
     print("Loading and filtering records...")
+    def record_generator():
+        for path in files:
+            print(f"  → loading {path}")
+            chunk = torch.load(path, weights_only=False)
+            keys = list(chunk.keys())
+            n = len(chunk[keys[0]])
+            for i in range(n):
+                record = {k: chunk[k][i] for k in keys}
+                check_record(record, features)
+                if record['timestamp'] < cutoff:
+                    yield record
+            # free memory for this chunk before moving on
+            del chunk
+            gc.collect()
 
-    for f in files:
-        print(f'Loading {f}')
-        chunk = torch.load(f, weights_only=False)
-        chunk_size = len(chunk['model'])
-        for i in range(chunk_size):
-            record = {k: chunk[k][i] for k in chunk.keys()}
-            if record['timestamp'] < cutoff_timestamp:
-                filtered_records.append(record)
-    
-    total_filtered = len(filtered_records)
-    print(f'Total records after filtering: {total_filtered}')
-    
-    # Determine a neat repository name based on total_filtered
-    repo_size_str = f"{total_filtered / 1_000_000:.1f}M"
-    
-    repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
-    print(f'Uploading dataset to Hugging Face repository: {repo_id}')
-    
-    # Create Hugging Face dataset
-    dataset = Dataset.from_list(filtered_records)
-    
-    # Push to Hugging Face
-    dataset.push_to_hub(repo_id)
-    
-    print(f'Dataset successfully uploaded to {repo_id}')
+    #sample = list(itertools.islice(record_generator(), 1000))
+    #print(f"🔢 Sampled {len(sample)} records to infer schema…")
+    #ds_sample = Dataset.from_list(sample)
+    #features = ds_sample.features
+    #print("👀 Inferred features:", features)
+    #import pdb; pdb.set_trace()
+    ds = Dataset.from_generator(record_generator, features=features)
+
+    ## 1) write real Arrow shards to disk
+    #export_dir = "./hf_export"
+    ## clear out any old export
+    #shutil.rmtree(export_dir, ignore_errors=True)
+    #ds_stream.save_to_disk(export_dir)
+
+    ## 2) load it back as a regular Dataset
+    #ds = load_from_disk(export_dir)
+    #import pdb; pdb.set_trace()
+    #print(f"🔢 Dataset contains {ds.num_rows} examples.")
+
+    # 3) ensure the repo exists, then push the full shards
+    repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
+    #create_repo(repo_id, repo_type="dataset", exist_ok=True)
+    ds.push_to_hub(repo_id)
+
+    print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
+    #repo_size_str = f"4M"
+    #repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+    #print(f'Uploading dataset to Hugging Face repository: {repo_id}')
+    #
+    ## Create Hugging Face dataset
+    #dataset = Dataset.from_generator(record_generator, features=features)
+    #
+    ## Push to Hugging Face
+    #dataset.push_to_hub(repo_id, split='train')
+    #
+    #print(f'Dataset successfully uploaded to {repo_id}')
 
     
 def add_languages(save_name):
