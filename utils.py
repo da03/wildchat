@@ -1,4 +1,5 @@
 import sys
+import glob
 import copy
 import re
 import os
@@ -582,84 +583,102 @@ def hash_ips(save_name):
         assert set(d.keys()) == set(['model', 'timestamp', 'conversation', 'turn', 'language', 'toxic', 'state', 'country', 'hashed_ip', 'header']), d.keys()
         torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.pt')
 
+def push_dataset(save_name):
+    if save_name.endswith('.pt'):
+        save_name = save_name[:-len('.pt')]
+    files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
+    filtered_records = []
+    cutoff_timestamp = datetime(2025, 5, 1)  # filter out from June 2025 onwards
+
+    print("Loading and filtering records...")
+
+    for f in files:
+        print(f'Loading {f}')
+        chunk = torch.load(f, weights_only=False)
+        chunk_size = len(chunk['model'])
+        for i in range(chunk_size):
+            record = {k: chunk[k][i] for k in chunk.keys()}
+            if record['timestamp'] < cutoff_timestamp:
+                filtered_records.append(record)
+    
+    total_filtered = len(filtered_records)
+    print(f'Total records after filtering: {total_filtered}')
+    
+    # Determine a neat repository name based on total_filtered
+    repo_size_str = f"{total_filtered / 1_000_000:.1f}M"
+    
+    repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+    print(f'Uploading dataset to Hugging Face repository: {repo_id}')
+    
+    # Create Hugging Face dataset
+    dataset = Dataset.from_list(filtered_records)
+    
+    # Push to Hugging Face
+    dataset.push_to_hub(repo_id)
+    
+    print(f'Dataset successfully uploaded to {repo_id}')
+
+    
 def add_languages(save_name):
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')]
-    d = torch.load(f'{save_name}.cacheddict.pt')
-    conversations = d['conversation'] # TODO: sort by date, remove last day
-    #import pdb; pdb.set_trace()
-    #detector = LanguageDetectorBuilder.from_all_languages().with_preloaded_language_models().build()
-    GENERATE_DATABASE = False
-    GENERATE_DATABASE = True
-    if GENERATE_DATABASE:
+    #d = torch.load(f'{save_name}.cacheddict.pt')
+    # gather all chunk files
+    files = glob.glob(f'{save_name}.cacheddict.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
+    
+    ## Initialize an empty dict to hold combined data
+    #d = {}
+    
+    for chunk_idx, file in enumerate(files):
+        print (f'loading {file}')
+        d = torch.load(file, weights_only=False)
+        conversations = d['conversation'] # TODO: sort by date, remove last day
         queries = []
         for conversation in tqdm.tqdm(conversations):
-            #langs = []
             for turn in conversation:
                 if turn["content"].strip() == "":
                     pass
                 else:
                     queries.append(turn['content'])
-        #del d
-        n = 37
-        n = 23
-        n = 63
-        #n = 32
-        n = 13
-        n = 8
-        n = 128
-        #with Pool(n) as pool:
-        #    pool.map(query_language_with_cache_worker, chunks(queries, n))
-        #import pdb; pdb.set_trace()
         from lingua import LanguageDetectorBuilder
         detector_local = LanguageDetectorBuilder.from_all_languages().with_preloaded_language_models().build()
         confidence_values_list = detector_local.compute_language_confidence_values_in_parallel(queries)
+        languages = []
+        i = 0
+        for conversation in tqdm.tqdm(conversations):
+            langs = []
+            for turn in conversation:
+                if turn["content"].strip() == "":
+                    language = 'nolang'
+                else:
+                    #confidence_values = detector.compute_language_confidence_values(turn["content"])
+                    confidence_values = confidence_values_list[i]
+                    i += 1
+                    language = str(confidence_values[0].language).split('.')[-1]
+                language = language.title()
+                langs.append(language)
+                turn["language"] = language
+            languages.append(most_frequent(langs))
+        d['language'] = languages
+        total_size = len(languages)
+        for key in d:
+            assert len(d[key]) == total_size, (len(d[key]), key)
+    
+        torch.save(d, f'{save_name}.cacheddict.withlang.chunk{chunk_idx}.pt')
+        print(f'Saved chunk {chunk_idx}')
 
-
-    #    for chunk in chunks(queries, n):
-    #        print ('chunk', n)
-    #        chunk = list(chunk)
-    #        confidence_values_list = detector_local.compute_language_confidence_values_in_parallel(chunk)
-    #        #m = {}
-    #        #for a, b in zip(confidence_values_list, chunk):
-    #        #    m[b] = str(a[0].language).split('.')[-1]
-    #        #def f(content):
-    #        #    return m[content], True
-    #        #def query_language(content):
-    #        #    print ('ca', content[:10], len(content))
-    #        #    confidence_values = detector_local.compute_language_confidence_values(content)
-    #        #    language = str(confidence_values[0].language).split('.')[-1]
-    #        #    return language, True 
-    #        #i = 0
-    #        #contents = list(contents)
-    #        #for a, content in zip(confidence_values_list, tqdm.tqdm(chunk)):
-    #        #    key = hashlib.sha256(content.encode('utf-8')).hexdigest()
-    #        #    insert_or_update(database_name_language, table_name_language, key, content, str(a[0].language).split('.')[-1])
-    #        #    #try:
-    #        #    #    query_f_with_cache(database_name_language, table_name_language, f, content)
-    #        #    #except Exception as e:
-    #        #    #    print (e)
-    #        #    #import pdb; pdb.set_trace()
-    #    print ('pooled lang')
-    #    sys.exit(1)
-    languages = []
-    i = 0
-    for conversation in tqdm.tqdm(conversations):
-        langs = []
-        for turn in conversation:
-            if turn["content"].strip() == "":
-                language = 'nolang'
-            else:
-                #confidence_values = detector.compute_language_confidence_values(turn["content"])
-                confidence_values = confidence_values_list[i]
-                i += 1
-                language = str(confidence_values[0].language).split('.')[-1]
-            language = language.title()
-            langs.append(language)
-            turn["language"] = language
-        languages.append(most_frequent(langs))
-    d['language'] = languages
-    torch.save(d, f'{save_name}.cacheddict.withlang.pt')
     #import pdb; pdb.set_trace()
     #dataset = Dataset.from_dict(d)
     #dataset.push_to_hub('allenai/internal_WildChat', split='train')
@@ -686,7 +705,7 @@ def link_conversations(save_name):
     #import pdb; pdb.set_trace()
     filename = f'{save_name}.hash.pt'
     times = []
-    results = torch.load(filename)
+    results = torch.load(filename, weights_only=False)
     # earlier dates first
     results = sorted(results, key=lambda x: x['timestamp'])
     current_turn_hashes = {}
@@ -803,13 +822,32 @@ def link_conversations(save_name):
     #import pdb; pdb.set_trace()
     while os.path.exists(filename):
         print (f'parsing {filename}')
-        chunk = torch.load(filename)
+        chunk = torch.load(filename, weights_only=False)
         for turn_position, turn in enumerate(tqdm.tqdm(chunk)):
             if (chunk_id, turn_position) in chunk_id_result_id_to_conversation_id:
                 for position, info_id in chunk_id_result_id_to_conversation_id[(chunk_id, turn_position)]:
                     turn_header = extract_header(turn['headers'])
                     all_conversations[position][info_id*2] = {'role': 'user', 'content': turn['payload']['messages'][-1]['content'].encode('utf-8', errors='ignore').decode('utf-8'), 'ip': turn['ip'], 'header': turn_header, 'turn_identifier': turn['turn_id']}
                     all_conversations[position][info_id*2+1] = {'role': 'assistant', 'content': turn['partial_words'].encode('utf-8', errors='ignore').decode('utf-8'), 'timestamp': turn['timestamp'], 'turn_identifier': turn['turn_id']}
+                    if 'usage' in turn:
+                        #import pdb; pdb.set_trace()
+                        all_conversations[position][info_id*2+1]['usage'] = turn['usage']
+                    for k in ['token_counter', 'id', 'created', 'system_fingerprint']:
+                        if k in turn:
+                            k_tgt = k
+                            if k == 'id':
+                                k_tgt = 'openai_id'
+                            all_conversations[position][info_id*2+1][k_tgt] = turn[k]
+                    for k in ['temperature', 'top_p']:
+                        if k in turn['payload']:
+                            all_conversations[position][info_id*2+1][k] = turn['payload'][k]
+                        else:
+                            import pdb; pdb.set_trace()
+                            print ("dfsdfs")
+                    for k in turn:
+                        if k not in all_conversations[position][info_id*2+1] and k not in all_conversations[position][info_id*2] and k not in ['payload', 'partial_words', 'counter', 'id', 'model', 'headers', 'turn_id', 'device_fingerprint', 'object', 'service_tier']:
+                            import pdb; pdb.set_trace()
+                            print (k)
                     assert all_models[position] == turn['model']
                     assert all_timestamps[position] >= turn['timestamp']
                     if all_ips[position] is None:
@@ -827,11 +865,26 @@ def link_conversations(save_name):
     for i in range(len(all_ips)):
         all_ips[i] = most_frequent(all_ips[i])
     #import pdb; pdb.set_trace()
-    d = {'model': all_models, 'conversation': all_conversations, 'turn': turns, 'ip': all_ips, 'device_fingerprint': all_device_fingerprints, 'timestamp': all_timestamps, 'header': all_headers}
-    torch.save(d, f'{save_name}.cacheddict.pt')
+    #d = {'model': all_models, 'conversation': all_conversations, 'turn': turns, 'ip': all_ips, 'device_fingerprint': all_device_fingerprints, 'timestamp': all_timestamps, 'header': all_headers}
+    d = {'model': all_models, 'timestamp': all_timestamps, 'conversation': all_conversations, 'turn': turns, 'ip': all_ips, 'device_fingerprint': all_device_fingerprints, 'header': all_headers}
+    #torch.save(d, f'{save_name}.cacheddict.pt')
+    chunk_size = 200000  # Adjust this size based on memory constraints
+    total_size = len(all_models)
+    for key in d:
+        assert len(d[key]) == total_size, (len(d[key]), key)
+    
+    for chunk_start in range(0, total_size, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, total_size)
+        
+        chunk_dict = {key: d[key][chunk_start:chunk_end] for key in d}
+        
+        chunk_idx = chunk_start // chunk_size
+        torch.save(chunk_dict, f'{save_name}.cacheddict.chunk{chunk_idx}.pt')
+        print(f'Saved chunk {chunk_idx}: items {chunk_start} to {chunk_end}')
+
+    #del d['device_fingerprint']
     #import pdb; pdb.set_trace()
 
-    #dataset = Dataset.from_dict(d)
     #dataset.push_to_hub('allenai/internal_WildChat', split='train')
     
 

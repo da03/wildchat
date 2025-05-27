@@ -1,6 +1,6 @@
 import sys, os
 
-from utils import load, load_mysql, generate_hash, link_conversations, add_languages, add_detoxify, add_moderation, hash_ips, remove_wildbench
+from utils import load, load_mysql, generate_hash, link_conversations, add_languages, add_detoxify, add_moderation, hash_ips, remove_wildbench, push_dataset
 
 
 #baseline_file = 'output.baseline.csv'
@@ -17,14 +17,17 @@ print ('loading')
 #load_mysql(filename)
 print ('loaded')
 print ('hashing')
-generate_hash(filename)
+#generate_hash(filename)
 print ('hashed')
-#print ('linking')
+print ('linking')
 #link_conversations(filename)
-#print ('linked')
-#print ('langing')
+print ('linked')
+print ('langing')
 #add_languages(filename)
-#print ('langed')
+print ('langed')
+print ('pushing')
+push_dataset(filename)
+print ('pushed')
 #remove_wildbench(filename)
 #print ('moderating')
 #add_moderation(filename)
