@@ -335,65 +335,75 @@ def add_moderation_lmys():
 def remove_wildbench(save_name):
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')] # todo
-    d = torch.load(f'{save_name}.cacheddict.withlang.pt')
-    first_50char_to_id = {}
-    for i, conversation in enumerate(d['conversation']):
-        first_50char = conversation[0]['content'][:50]
-        if first_50char not in first_50char_to_id:
-            first_50char_to_id[first_50char] = []
-        first_50char_to_id[first_50char].append(i)
+    # gather all chunk files
+    files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
+    for chunk_idx, file in enumerate(files):
+        print (f'loading {file}')
+        d = torch.load(file, weights_only=False)
+        first_50char_to_id = {}
+        for i, conversation in enumerate(d['conversation']):
+            first_50char = conversation[0]['content'][:50]
+            if first_50char not in first_50char_to_id:
+                first_50char_to_id[first_50char] = []
+            first_50char_to_id[first_50char].append(i)
 
-    wildbench_ids = json.load(open('wildbench_ids.json'))
-    import pdb; pdb.set_trace()
-    missing = 0
-    ids_to_remove = []
-    for example in wildbench_ids:
-        first_50char = example['conversation_1st_turn_50chars']
-        if first_50char not in first_50char_to_id:
-            print ('d')
-            missing += 1
-            continue
-        ids = first_50char_to_id[first_50char]
-        if len(ids) == 0:
-            #import pdb; pdb.set_trace()
-            print ('a')
-        elif len(ids) > 1:
-            #import pdb; pdb.set_trace()
-            print ('b')
-            ids_new = []
-            for i in ids:
-                try:
-                    timestamp = datetime.strptime(example['timestamp'], '%Y-%m-%d %H:%M:%S%z').replace(tzinfo=None)
-                except Exception:
-                    timestamp = datetime.strptime(example['timestamp'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=None)
-                if d['conversation'][i][-1]['timestamp'] == timestamp:
-                    ids_new.append(i)
-            ids = ids_new
+        wildbench_ids = json.load(open('wildbench_ids.json'))
+        #import pdb; pdb.set_trace()
+        missing = 0
+        ids_to_remove = []
+        for example in wildbench_ids:
+            first_50char = example['conversation_1st_turn_50chars']
+            if first_50char not in first_50char_to_id:
+                print ('d')
+                missing += 1
+                continue
+            ids = first_50char_to_id[first_50char]
             if len(ids) == 0:
                 #import pdb; pdb.set_trace()
-                print ('ba')
-            if len(ids) > 1:
+                print ('a')
+            elif len(ids) > 1:
                 #import pdb; pdb.set_trace()
-                print ('bb')
-        #assert len(ids) == 1
-        ids_to_remove.extend(ids)
-    ids_to_remove = set(ids_to_remove)
-    print (missing, len(ids_to_remove))
-    keys = d.keys()
-    for key in keys:
-        values_new = []
-        values = d[key]
-        for i, val in enumerate(tqdm.tqdm(values)):
-            if i in ids_to_remove:
-                continue
-            values_new.append(val)
-        d[key] = values_new
-    torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.pt')
-    for key in d:
-        print (key, len(d[key]))
-    conversations = d['conversation']
-    print (len(conversations))
-    print (sum ([len(item) for item in conversations]))
+                print ('b')
+                ids_new = []
+                for i in ids:
+                    try:
+                        timestamp = datetime.strptime(example['timestamp'], '%Y-%m-%d %H:%M:%S%z').replace(tzinfo=None)
+                    except Exception:
+                        timestamp = datetime.strptime(example['timestamp'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=None)
+                    if d['conversation'][i][-1]['timestamp'] == timestamp:
+                        ids_new.append(i)
+                ids = ids_new
+                if len(ids) == 0:
+                    #import pdb; pdb.set_trace()
+                    print ('ba')
+                if len(ids) > 1:
+                    #import pdb; pdb.set_trace()
+                    print ('bb')
+            #assert len(ids) == 1
+            ids_to_remove.extend(ids)
+        ids_to_remove = set(ids_to_remove)
+        print (missing, len(ids_to_remove))
+        keys = d.keys()
+        for key in keys:
+            values_new = []
+            values = d[key]
+            for i, val in enumerate(tqdm.tqdm(values)):
+                if i in ids_to_remove:
+                    continue
+                values_new.append(val)
+            d[key] = values_new
+        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.chunk{chunk_idx}.pt')
+        for key in d:
+            print (key, len(d[key]))
+        conversations = d['conversation']
+        print (len(conversations))
+        print (sum ([len(item) for item in conversations]))
 
 
 
@@ -617,7 +627,7 @@ def push_dataset(save_name):
         return int(m.group(1)) if m else None
     files = sorted(files, key=chunk_index)
     filtered_records = []
-    cutoff = datetime(2025, 5, 1)  # filter out from June 2025 onwards
+    cutoff = datetime(2025, 7, 1)  # filter out from July 2025 onwards
     # explicit schema for nested structs
     features = Features({
     'model':              Value('string'),
@@ -702,22 +712,13 @@ def push_dataset(save_name):
     #print(f"🔢 Dataset contains {ds.num_rows} examples.")
 
     # 3) ensure the repo exists, then push the full shards
-    repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
-    #create_repo(repo_id, repo_type="dataset", exist_ok=True)
-    ds.push_to_hub(repo_id)
-
-    print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
-    #repo_size_str = f"4M"
-    #repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
-    #print(f'Uploading dataset to Hugging Face repository: {repo_id}')
-    #
-    ## Create Hugging Face dataset
-    #dataset = Dataset.from_generator(record_generator, features=features)
-    #
+    repo_size_str = f"{len(ds)/1e6:.1f}M"
+    repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+    #repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
+    create_repo(repo_id, repo_type="dataset", exist_ok=True)
     ## Push to Hugging Face
-    #dataset.push_to_hub(repo_id, split='train')
-    #
-    #print(f'Dataset successfully uploaded to {repo_id}')
+    ds.push_to_hub(repo_id, split='train')
+    print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
 
     
 def add_languages(save_name):
