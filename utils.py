@@ -138,11 +138,11 @@ def get_user_input(filename):
     return outs
 
 
-database_name_moderation = '/root/openai_responses.db'
+database_name_moderation = './cache/openai_responses.db'
 table_name_moderation = 'openai_responses'
-database_name_detoxify = '/root/detoxify_responses.db'
+database_name_detoxify = './cache/detoxify_responses.db'
 table_name_detoxify = 'detoxify_responses'
-database_name_language = '/root/language_responses.db'
+database_name_language = './cache/language_responses.db'
 table_name_language = 'language_responses'
 
 def create_database(database_name, table_name):
@@ -212,7 +212,7 @@ def query_moderation(content, max_num_retries=2, wait_time=20, raise_e=False):
         if num_retries > 0:
             print (f'retrying {num_retries} times')
         try:
-            response = client.moderations.create(input=content)
+            response = client.moderations.create(model="omni-moderation-latest", input=content)
             finished = True
         except Exception as e:
             if raise_e:
@@ -288,49 +288,6 @@ def query_moderation_with_cache_worker(contents):
             print (f'Skipping Error: {e}')
             time.sleep(1)
         i += 1
-
-def add_moderation_lmys():
-    ds = load_dataset('lmsys/lmsys-chat-1m')['train']
-    seed = 42
-    # Shuffle and subsample 1000 examples
-    ds = ds.shuffle(seed=seed).select(range(1000))
-
-    GENERATE_DATABASE = True
-    GENERATE_DATABASE = False
-    if GENERATE_DATABASE:
-        queries = []
-        for d in ds:
-            conversation = d['conversation']
-            for turn in conversation:
-                content = turn['content']
-                if content != '':
-                    queries.append(content)
-        n = 32
-        with Pool(n) as pool:
-            pool.map(query_moderation_with_cache_worker, chunks(queries, n))
-    total_user = 0
-    user_toxic = 0
-    total_asst = 0
-    asst_toxic = 0
-    for d in ds:
-        conversation = d['conversation']
-        for turn in conversation:
-            content = turn['content']
-            if turn['role'] == 'user':
-                total_user += 1
-                if content != '':
-                    results, _ = query_f_with_cache(database_name_moderation, table_name_moderation, query_moderation, content)
-                    if results['flagged']:
-                        user_toxic += 1
-            else:
-                total_asst += 1
-                if content != '':
-                    results, _ = query_f_with_cache(database_name_moderation, table_name_moderation, query_moderation, content)
-                    if results['flagged']:
-                        asst_toxic += 1
-    print (user_toxic/ total_user)
-    print (asst_toxic/ total_asst)
-
 
 def remove_wildbench(save_name):
     if save_name.endswith('.pt'):
@@ -410,82 +367,99 @@ def remove_wildbench(save_name):
 
 
 def add_moderation(save_name):
-    if save_name.endswith('.pt'):
-        save_name = save_name[:-len('.pt')] # todo
     GENERATE_DATABASE = True
     GENERATE_DATABASE = False
-    if GENERATE_DATABASE:
-        d = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.pt')
+    if save_name.endswith('.pt'):
+        save_name = save_name[:-len('.pt')] # todo
+    # gather all chunk files
+    files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
+    for chunk_idx, file in enumerate(files):
+        if GENERATE_DATABASE:
+            print (f'loading {file}')
+            d = torch.load(file, weights_only=False)
+            conversations = d['conversation'] # TODO: sort by date, remove last day
+            #languages = []
+            queries = []
+            for conversation in tqdm.tqdm(conversations):
+                #langs = []
+                for turn in conversation:
+                    if turn["content"] == "":
+                        pass
+                    else:
+                        queries.append(turn['content'])
+            del d
+            #queries = queries[:10]
+            #import pdb; pdb.set_trace()
+            #n = 50
+            n = 37
+            n = 128
+            #n = 32
+            n = 63
+            n = 11
+            n = 13
+            n = 11
+            n = 7
+            n = 23
+            n = 37
+            #import pdb; pdb.set_trace()
+            #query_moderation_with_cache_worker(queries[:10])
+            #import pdb; pdb.set_trace()
+            with Pool(n) as pool:
+                pool.map(query_moderation_with_cache_worker, chunks(queries, n))
+            print ('pooled moderation')
+            #sys.exit(1)
+    import pdb; pdb.set_trace()
+    for chunk_idx, file in enumerate(files):
+        print (f'loading {file}')
+        d = torch.load(file, weights_only=False)
         conversations = d['conversation'] # TODO: sort by date, remove last day
-        #import pdb; pdb.set_trace()
-        #languages = []
-        queries = []
+        import collections
+        c = collections.defaultdict(int)
+        aaa = 0
+        english = 0
+        total = 0
+        total_c = 0
+        counts = collections.defaultdict(int)
         for conversation in tqdm.tqdm(conversations):
-            #langs = []
             for turn in conversation:
-                if turn["content"] == "":
-                    pass
+                content = turn["content"]
+                if content == "":
+                    results = {}
                 else:
-                    queries.append(turn['content'])
-        del d
-        #queries = queries[:10]
-        #import pdb; pdb.set_trace()
-        #n = 50
-        n = 37
-        n = 23
-        n = 128
-        #n = 32
-        n = 63
-        n = 11
-        n = 13
-        with Pool(n) as pool:
-            pool.map(query_moderation_with_cache_worker, chunks(queries, n))
-        #import pdb; pdb.set_trace()
-        print ('pooled moderation')
-        sys.exit(1)
-    d = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.pt')
-    conversations = d['conversation'] # TODO: sort by date, remove last day
-    import collections
-    c = collections.defaultdict(int)
-    aaa = 0
-    english = 0
-    total = 0
-    total_c = 0
-    counts = collections.defaultdict(int)
-    for conversation in tqdm.tqdm(conversations):
-        for turn in conversation:
-            content = turn["content"]
-            if content == "":
-                results = {}
-            else:
-                results, _ = query_f_with_cache(database_name_moderation, table_name_moderation, query_moderation, content)
-            if turn['language'].lower() == 'english':
-                english += 1
-            counts[turn['language']] += 1
-            total += 1
-            if '_splitted' in results:
-                total_c += 1
-                del results['_splitted']
-                #print (turn.keys())
-                print (turn['language'], english/total)
-                c[turn['language']] += 1
-                aaa += 1
-                #with open(f'examples/{turn["language"]}_{c[turn["language"]]}.txt', 'w') as fout:
-                #    fout.write(content)
-                print (c)
-            turn['openai_moderation'] = results
-    torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.pt')
-    #counts = [(-counts[k], k) for k in counts]
-    #counts = sorted(counts)
-    #with open('counts.txt', 'w') as fout:
-    #    for v, k in counts:
-    #        fout.write(f'{k}: {-v/ total}\n')
-    #counts = [(-c[k], k) for k in c]
-    #counts = sorted(counts)
-    #with open('c.txt', 'w') as fout:
-    #    for v, k in counts:
-    #        fout.write(f'{k}: {-v/ total_c}\n')
-    #print (counts)
+                    results, _ = query_f_with_cache(database_name_moderation, table_name_moderation, query_moderation, content)
+                if turn['language'].lower() == 'english':
+                    english += 1
+                counts[turn['language']] += 1
+                total += 1
+                if '_splitted' in results:
+                    total_c += 1
+                    del results['_splitted']
+                    #print (turn.keys())
+                    print (turn['language'], english/total)
+                    c[turn['language']] += 1
+                    aaa += 1
+                    #with open(f'examples/{turn["language"]}_{c[turn["language"]]}.txt', 'w') as fout:
+                    #    fout.write(content)
+                    print (c)
+                turn['openai_moderation'] = results
+        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.chunk{chunk_idx}.pt')
+        #counts = [(-counts[k], k) for k in counts]
+        #counts = sorted(counts)
+        #with open('counts.txt', 'w') as fout:
+        #    for v, k in counts:
+        #        fout.write(f'{k}: {-v/ total}\n')
+        #counts = [(-c[k], k) for k in c]
+        #counts = sorted(counts)
+        #with open('c.txt', 'w') as fout:
+        #    for v, k in counts:
+        #        fout.write(f'{k}: {-v/ total_c}\n')
+        #print (counts)
 
 
 
@@ -515,26 +489,41 @@ def query_detoxify_with_cache_worker(args):
 def add_detoxify(save_name):
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')] # todo
-
-    d = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.pt') #TODO: use lang
-    conversations = d['conversation'] # TODO: sort by date, remove last day
-
-    GENERATE_DATABASE = True
+    # gather all chunk files
+    files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
     GENERATE_DATABASE = False
-    if GENERATE_DATABASE:
-        queries = []
-        for conversation in tqdm.tqdm(conversations):
-            for turn in conversation:
-                if turn["content"].strip() == "":
-                    pass
-                    #results = {}
-                else:
-                    queries.append(turn['content'])#results = model.predict(turn['content'])
-        n = 8
-        print (len(queries))
-        with Pool(n) as pool:
-            pool.map(query_detoxify_with_cache_worker, enumerate(chunks(queries, n)))
-        sys.exit(1)
+    GENERATE_DATABASE = True
+    for chunk_idx, file in enumerate(files):
+        if GENERATE_DATABASE:
+            print (f'loading {file}')
+            d = torch.load(file, weights_only=False)
+            conversations = d['conversation'] # TODO: sort by date, remove last day
+            queries = []
+            for conversation in tqdm.tqdm(conversations):
+                for turn in conversation:
+                    if turn["content"].strip() == "":
+                        pass
+                        #results = {}
+                    else:
+                        queries.append(turn['content'])#results = model.predict(turn['content'])
+            print (len(queries))
+            n = torch.cuda.device_count()
+            print(f"Number of available GPUs: {n}")
+            if n == 1:
+                query_detoxify_with_cache_worker((0, queries))
+            else:
+                #import pdb; pdb.set_trace()
+                with Pool(n) as pool:
+                    pool.map(query_detoxify_with_cache_worker, enumerate(chunks(queries, n)))
+            #sys.exit(1)
+    import pdb; pdb.set_trace()
+    sys.exit(1)
     worker_id = 0
     #model = Detoxify('multilingual', device=f"cpu")
     model = Detoxify('multilingual', device=f"cuda:{worker_id}")
@@ -627,7 +616,7 @@ def push_dataset(save_name):
         return int(m.group(1)) if m else None
     files = sorted(files, key=chunk_index)
     filtered_records = []
-    cutoff = datetime(2025, 7, 1)  # filter out from July 2025 onwards
+    cutoff = datetime(2025, 8, 1)  # filter out from Aug 2025 onwards
     # explicit schema for nested structs
     features = Features({
     'model':              Value('string'),
