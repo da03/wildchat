@@ -367,8 +367,8 @@ def remove_wildbench(save_name):
 
 
 def add_moderation(save_name):
-    GENERATE_DATABASE = True
     GENERATE_DATABASE = False
+    GENERATE_DATABASE = True
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')] # todo
     # gather all chunk files
@@ -497,8 +497,8 @@ def add_detoxify(save_name):
         m = re.search(r'chunk(\d+)\.pt$', path)
         return int(m.group(1)) if m else None
     files = sorted(files, key=chunk_index)
-    GENERATE_DATABASE = False
     GENERATE_DATABASE = True
+    GENERATE_DATABASE = False
     for chunk_idx, file in enumerate(files):
         if GENERATE_DATABASE:
             print (f'loading {file}')
@@ -522,8 +522,9 @@ def add_detoxify(save_name):
                 with Pool(n) as pool:
                     pool.map(query_detoxify_with_cache_worker, enumerate(chunks(queries, n)))
             #sys.exit(1)
-    import pdb; pdb.set_trace()
-    sys.exit(1)
+    if GENERATE_DATABASE:
+        import pdb; pdb.set_trace()
+    #sys.exit(1)
     worker_id = 0
     #model = Detoxify('multilingual', device=f"cpu")
     model = Detoxify('multilingual', device=f"cuda:{worker_id}")
@@ -535,35 +536,86 @@ def add_detoxify(save_name):
                 results[k] = v.item()
         return results, True
 
-    for conversation in tqdm.tqdm(conversations):
-        for turn in conversation:
-            content = turn["content"]
-            if content == "":
-                results = {}
-            else:
-                results, _ = query_f_with_cache(database_name_detoxify, table_name_detoxify, query_detoxify, content)
-            turn['detoxify_moderation'] = results
-    torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.pt')
+    for chunk_idx, file in enumerate(files):
+        print (f'loading {file}')
+        d = torch.load(file, weights_only=False)
+        conversations = d['conversation'] # TODO: sort by date, remove last day
+        for conversation in tqdm.tqdm(conversations):
+            for turn in conversation:
+                content = turn["content"]
+                if content == "":
+                    results = {}
+                else:
+                    results, _ = query_f_with_cache(database_name_detoxify, table_name_detoxify, query_detoxify, content)
+                turn['detoxify_moderation'] = results
+        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.chunk{chunk_idx}.pt')
 
 def hash_ips(save_name):
+    import geoip2.database
+    # 1) Discover & sort your MMDBs once at startup
+    _mmdb_pattern = re.compile(r'GeoLite2-City-(\d{4}-\d{2}-\d{2})\.mmdb$')
+    _mmdb_list = []
+    for path in glob.glob('./geocity/GeoLite2-City-*.mmdb'):
+        m = _mmdb_pattern.search(path)
+        if m:
+            d = datetime.strptime(m.group(1), '%Y-%m-%d').date()
+            _mmdb_list.append((d, path))
+    _mmdb_list.sort(key=lambda x: x[0])
+    
+    # 2) Cache readers by path
+    _readers = {}
+    
+    def _get_reader_for_date(target_date):
+        # binary search for latest date ≤ target_date
+        lo, hi = 0, len(_mmdb_list)-1
+        best = None
+        while lo <= hi:
+            mid = (lo+hi)//2
+            if _mmdb_list[mid][0] <= target_date:
+                best = _mmdb_list[mid]
+                lo = mid+1
+            else:
+                hi = mid-1
+        if best is None:
+            # all DBs are later than target; pick earliest
+            best = _mmdb_list[0]
+        _, mmdb_path = best
+        if mmdb_path not in _readers:
+            _readers[mmdb_path] = geoip2.database.Reader(mmdb_path)
+        return _readers[mmdb_path]
+    
+    # 3) Revised lookup function
+    def get_state_country(ip, ts):
+        """
+        ip: str
+        ts: datetime.datetime or date string in ISO format
+        """
+        #import pdb; pdb.set_trace()
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts).date()
+        elif hasattr(ts, 'date'):
+            ts = ts.date()
+        reader = _get_reader_for_date(ts)
+        try:
+            resp = reader.city(ip)
+            return resp.subdivisions.most_specific.name, resp.country.name
+        except Exception:
+            return None, None
+
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')] # todo
-
-    d = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.pt') #TODO: use lang
-    conversations = d['conversation'] # TODO: sort by date, remove last day
-
-    import geoip2.database
-
-    with geoip2.database.Reader('/mnt/wildchat/natural-dialogues/GeoLite2-City_20240416/GeoLite2-City.mmdb') as reader:
-        def get_state_country(ip):
-            try:
-                response = reader.city(ip)
-                country = response.country.name
-                state = response.subdivisions.most_specific.name
-            except Exception as e:
-                state = None
-                country = None
-            return state, country
+    # gather all chunk files
+    files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.chunk*.pt')
+    # sort by numeric index after “chunk”
+    def chunk_index(path):
+        # this regex finds the digits between “chunk” and “.pt”
+        m = re.search(r'chunk(\d+)\.pt$', path)
+        return int(m.group(1)) if m else None
+    files = sorted(files, key=chunk_index)
+    for chunk_idx, file in enumerate(files):
+        print (f'loading {file}')
+        d = torch.load(file, weights_only=False)
+        conversations = d['conversation'] # TODO: sort by date, remove last day
 
         #import pdb; pdb.set_trace()
         toxics = []
@@ -578,7 +630,7 @@ def hash_ips(save_name):
 
                 if i % 2 == 0:
                     ip = turn["ip"]
-                    state, country = get_state_country(ip)
+                    state, country = get_state_country(ip, conversation[i+1]['timestamp'])
                     turn['country'] = country
                     turn['state'] = state
                     del turn['ip']
@@ -589,8 +641,11 @@ def hash_ips(save_name):
         states = []
         countries = []
         hashed_ips = []
-        for ip in d['ip']:
-            state, country = get_state_country(ip)
+        for ip, conversation in zip(d['ip'], d['conversation']):
+            #import pdb; pdb.set_trace()
+            #state, country = get_state_country(ip)
+            state = most_frequent([turn['state'] for turn in conversation if 'state' in turn])
+            country = most_frequent([turn['country'] for turn in conversation if 'country' in turn])
             states.append(state)
             countries.append(country)
             hashed_ips.append(hash_ip_with_salt(ip, batch_salt))
@@ -603,12 +658,15 @@ def hash_ips(save_name):
 
         a = d.keys()
         assert set(d.keys()) == set(['model', 'timestamp', 'conversation', 'turn', 'language', 'toxic', 'state', 'country', 'hashed_ip', 'header']), d.keys()
-        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.pt')
+        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.chunk{chunk_idx}.pt')
 
-def push_dataset(save_name):
+def push_dataset(save_name, after_ip=False):
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')]
-    files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
+    if not after_ip:
+        files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
+    else:
+        files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.chunk*.pt')
     # sort by numeric index after “chunk”
     def chunk_index(path):
         # this regex finds the digits between “chunk” and “.pt”
@@ -618,52 +676,186 @@ def push_dataset(save_name):
     filtered_records = []
     cutoff = datetime(2025, 8, 1)  # filter out from Aug 2025 onwards
     # explicit schema for nested structs
-    features = Features({
-    'model':              Value('string'),
-    'timestamp':          Value('timestamp[us]'),
-    'conversation':       [Features({
-        'content':          Value('string'),
-        'created':          Value('int64'),
-        'header':           Features({
-            'accept-language': Value('string'),
-            'user-agent':      Value('string'),
-        }),
-        'ip':               Value('string'),
-        'language':         Value('string'),
-        'openai_id':        Value('string'),
-        'role':             Value('string'),
-        'temperature':      Value('float64'),
-        'timestamp':        Value('timestamp[us]'),
-        'token_counter':    Value('int64'),
-        'top_p':            Value('float64'),
-        'turn_identifier':  Value('int64'),
-        'system_fingerprint': Value('string'),
-        'usage': Features({
-            'completion_tokens':         Value('int64'),
-            'completion_tokens_details': Features({
-                'reasoning_tokens': Value('int64'),
-                'text_tokens': Value('int64'),
-                'audio_tokens': Value('int64'),
-                'accepted_prediction_tokens': Value('int64'),
-                'rejected_prediction_tokens': Value('int64')
+    if not after_ip:
+        features = Features({
+            'model':              Value('string'),
+            'timestamp':          Value('timestamp[us]'),
+            'conversation':       [Features({
+                'content':          Value('string'),
+                'created':          Value('int64'),
+                'header':           Features({
+                    'accept-language': Value('string'),
+                    'user-agent':      Value('string'),
+                }),
+                'ip':               Value('string'),
+                'language':         Value('string'),
+                'openai_id':        Value('string'),
+                'role':             Value('string'),
+                'temperature':      Value('float64'),
+                'timestamp':        Value('timestamp[us]'),
+                'token_counter':    Value('int64'),
+                'top_p':            Value('float64'),
+                'turn_identifier':  Value('int64'),
+                'system_fingerprint': Value('string'),
+                'usage': Features({
+                    'completion_tokens':         Value('int64'),
+                    'completion_tokens_details': Features({
+                        'reasoning_tokens': Value('int64'),
+                        'text_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                        'accepted_prediction_tokens': Value('int64'),
+                        'rejected_prediction_tokens': Value('int64')
+                    }),
+                    'prompt_tokens':             Value('int64'),
+                    'total_tokens':              Value('int64'),
+                    'prompt_tokens_details': Features({
+                        'cached_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                    }),
+                }),
+            })],
+            'turn':               Value('int64'),
+            'ip':                 Value('string'),
+            'device_fingerprint': Value('string'),
+            'header':             Features({
+                'accept-language': Value('string'),
+                'user-agent':      Value('string'),
             }),
-            'prompt_tokens':             Value('int64'),
-            'total_tokens':              Value('int64'),
-            'prompt_tokens_details': Features({
-                'cached_tokens': Value('int64'),
-                'audio_tokens': Value('int64'),
+            'language':           Value('string'),
+        })
+    else:
+        features = Features({
+            'model':              Value('string'),
+            'timestamp':          Value('timestamp[us]'),
+            'conversation':       [Features({
+                'content':          Value('string'),
+                'created':          Value('int64'),
+                'header':           Features({
+                    'accept-language': Value('string'),
+                    'user-agent':      Value('string'),
+                }),
+                'hashed_ip':               Value('string'),
+                'country':          Value('string'),
+                'toxic':            Value('bool'),
+                'state':            Value('string'),
+                'language':         Value('string'),
+                'openai_id':        Value('string'),
+                'role':             Value('string'),
+                'temperature':      Value('float64'),
+                'timestamp':        Value('timestamp[us]'),
+                'token_counter':    Value('int64'),
+                'top_p':            Value('float64'),
+                'turn_identifier':  Value('int64'),
+                'system_fingerprint': Value('string'),
+                'detoxify_moderation': Features({
+                    'identity_attack': Value('float64'),
+                    'insult': Value('float64'),
+                    'obscene': Value('float64'),
+                    'severe_toxicity': Value('float64'),
+                    'sexual_explicit': Value('float64'),
+                    'threat': Value('float64'),
+                    'toxicity': Value('float64'),
+                }),
+                'openai_moderation': Features({
+                    'categories': Features({
+                        'harassment': Value('bool'),
+                        'harassment/threatening': Value('bool'),
+                        'harassment_threatening': Value('bool'),
+                        'hate': Value('bool'),
+                        'hate/threatening': Value('bool'),
+                        'hate_threatening': Value('bool'),
+                        'illicit': Value('bool'),
+                        'illicit/violent': Value('bool'),
+                        'illicit_violent': Value('bool'),
+                        'self-harm': Value('bool'),
+                        'self-harm/instructions': Value('bool'),
+                        'self-harm/intent': Value('bool'),
+                        'self_harm': Value('bool'),
+                        'self_harm_instructions': Value('bool'),
+                        'self_harm_intent': Value('bool'),
+                        'sexual': Value('bool'),
+                        'sexual/minors': Value('bool'),
+                        'sexual_minors': Value('bool'),
+                        'violence': Value('bool'),
+                        'violence/graphic': Value('bool'),
+                        'violence_graphic': Value('bool')
+                    }),
+                    'category_applied_input_types': Features({
+                        'harassment': [Value('string')],
+                        'harassment/threatening': [Value('string')],
+                        'harassment_threatening': [Value('string')],
+                        'hate': [Value('string')],
+                        'hate/threatening': [Value('string')],
+                        'hate_threatening': [Value('string')],
+                        'illicit': [Value('string')],
+                        'illicit/violent': [Value('string')],
+                        'illicit_violent': [Value('string')],
+                        'self-harm': [Value('string')],
+                        'self-harm/instructions': [Value('string')],
+                        'self-harm/intent': [Value('string')],
+                        'self_harm': [Value('string')],
+                        'self_harm_instructions': [Value('string')],
+                        'self_harm_intent': [Value('string')],
+                        'sexual': [Value('string')],
+                        'sexual/minors': [Value('string')],
+                        'sexual_minors': [Value('string')],
+                        'violence': [Value('string')],
+                        'violence/graphic': [Value('string')],
+                        'violence_graphic': [Value('string')],
+                    }),
+                    'category_scores': Features({
+                        'harassment': Value('float64'),
+                        'harassment/threatening': Value('float64'),
+                        'harassment_threatening': Value('float64'),
+                        'hate': Value('float64'),
+                        'hate/threatening': Value('float64'),
+                        'hate_threatening': Value('float64'),
+                        'illicit': Value('float64'),
+                        'illicit/violent': Value('float64'),
+                        'illicit_violent': Value('float64'),
+                        'self-harm': Value('float64'),
+                        'self-harm/instructions': Value('float64'),
+                        'self-harm/intent': Value('float64'),
+                        'self_harm': Value('float64'),
+                        'self_harm_instructions': Value('float64'),
+                        'self_harm_intent': Value('float64'),
+                        'sexual': Value('float64'),
+                        'sexual/minors': Value('float64'),
+                        'sexual_minors': Value('float64'),
+                        'violence': Value('float64'),
+                        'violence/graphic': Value('float64'),
+                        'violence_graphic': Value('float64'),
+                    }),
+                    'flagged': Value('bool'),
+                }),
+                'usage': Features({
+                    'completion_tokens':         Value('int64'),
+                    'completion_tokens_details': Features({
+                        'reasoning_tokens': Value('int64'),
+                        'text_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                        'accepted_prediction_tokens': Value('int64'),
+                        'rejected_prediction_tokens': Value('int64')
+                    }),
+                    'prompt_tokens':             Value('int64'),
+                    'total_tokens':              Value('int64'),
+                    'prompt_tokens_details': Features({
+                        'cached_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                    }),
+                }),
+            })],
+            'turn':               Value('int64'),
+            'toxic':          Value('bool'),
+            'hashed_ip':          Value('string'),
+            'country':          Value('string'),
+            'state':          Value('string'),
+            'header':             Features({
+                'accept-language': Value('string'),
+                'user-agent':      Value('string'),
             }),
-        }),
-    })],
-    'turn':               Value('int64'),
-    'ip':                 Value('string'),
-    'device_fingerprint': Value('string'),
-    'header':             Features({
-        'accept-language': Value('string'),
-        'user-agent':      Value('string'),
-    }),
-    'language':           Value('string'),
-})
+            'language':           Value('string'),
+        })
 
     print("Loading and filtering records...")
     def record_generator():
@@ -702,7 +894,10 @@ def push_dataset(save_name):
 
     # 3) ensure the repo exists, then push the full shards
     repo_size_str = f"{len(ds)/1e6:.1f}M"
-    repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+    if not after_ip:
+        repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+    else:
+        repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Processed-Internal"
     #repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
     create_repo(repo_id, repo_type="dataset", exist_ok=True)
     ## Push to Hugging Face
