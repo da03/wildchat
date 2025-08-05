@@ -31,6 +31,12 @@ python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 2
 python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx N
 ```
 
+Note that we have provided an example script of launching multiple jobs using slurm (it is unlikely to work without adapting to your own slurm environment!):
+
+```
+sbatch run_presidio_ner.slurm
+```
+
 Next, count the number of occurrences of each entity. These statistics will be later used for determining common entities (such as celebrities) that will not be removed.
 
 ```
