@@ -21,16 +21,14 @@ python process_database_final.py
 
 The PII removal code assumes access to a SLURM-managed GPU cluster and uses distributed computing to process data using multiple GPUs.
 
-First, split data into multiple chunks:
+First, run analyzer on every chunk (in practice, this should be run using multiple GPUs in parallel as spacy's NER is slow):
 
 ```
-python split_data_chunks.py
-```
-
-Next, run analyzer on every chunk (in practice, this should be run using multiple GPUs in parallel as spacy's NER is slow):
-
-```
-python run_analyzer.py [data_chunk_file]
+python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 0
+python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 1
+python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 2
+...
+python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx N
 ```
 
 Next, count the number of occurrences of each entity. These statistics will be later used for determining common entities (such as celebrities) that will not be removed.
