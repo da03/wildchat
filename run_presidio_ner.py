@@ -118,7 +118,7 @@ def main(save_name, chunk_idx):
                     err_msg = f'{e}'
                     print (err_msg)
     
-                    if '49149' in err_msg:
+                    if '49149' in err_msg or 'E088' in err_msg:
                         print ('case A')
                         chunks = __chunk_text_on_bytes(text_to_anonymize, 49000)
                         offset = 0

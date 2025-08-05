@@ -14,7 +14,7 @@ The below code presumes access to the raw MySQL database. It will run the below 
 * `hash_ips`: hashes IP addresses with salt to ensure nonreversibility.
 
 ```
-python process_database_final.py
+python process_database.py
 ```
 
 ## PII Removal (not cleaned up yet)
@@ -28,7 +28,7 @@ python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 0
 python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 1
 python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx 2
 ...
-python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx N
+python run_presidio_ner.py --save_name data/aug1_2025 --chunk_idx [N]
 ```
 
 Note that we have provided an example script of launching multiple jobs using slurm (it is unlikely to work without adapting to your own slurm environment!):
@@ -40,7 +40,7 @@ sbatch run_presidio_ner.slurm
 Next, count the number of occurrences of each entity. These statistics will be later used for determining common entities (such as celebrities) that will not be removed.
 
 ```
-python count_entity_freqs.py
+python count_entity_freqs.py --save_name data/aug1_2025
 ```
 
 Now, remove PII. The current PII removal code is developed iteratively: we check the identified named entities and add / remove rules to identify / deidentify PII. Similarly, we determine thresholds for common entities using an iterative process as well.
