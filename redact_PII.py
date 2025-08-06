@@ -1,4 +1,6 @@
 import sys
+import re
+import argparse
 import collections
 import glob
 import torch
@@ -212,7 +214,7 @@ def main(save_name):
     missed_turns = 0
     turns_removed = collections.defaultdict(int)
     conversations_removed = collections.defaultdict(int)
-    document_freq = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.entityfreq.pt')['document_freq']
+    document_freq = torch.load(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.entityfreq.pt', weights_only=False)['document_freq']
     for chunk_idx, file in enumerate(files):
         print (f'loading {file}')
         d = torch.load(file, weights_only=False)

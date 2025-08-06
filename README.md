@@ -46,7 +46,7 @@ python count_entity_freqs.py --save_name data/aug1_2025
 Now, redact PII. The current PII removal code is developed iteratively: we check the identified named entities and add / remove rules to identify / deidentify PII. Similarly, we determine thresholds for common entities using an iterative process as well.
 
 ```
-python redact_PII.py
+python redact_PII.py --save_name data/aug1_2025
 ```
 
 Finally, release data.
