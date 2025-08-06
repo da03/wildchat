@@ -222,6 +222,7 @@ def main(save_name):
             for entity in entities:
                 flag_removed[entity] = False
             for turn in conversation:
+                turn['redacted'] = False
                 text_to_anonymize = turn['content'].encode('utf-8', 'replace').decode()
                 total_turns += 1
                 analyzer_results = turn['analyzer_results']
@@ -286,10 +287,11 @@ def main(save_name):
                             operators=operators
                         )
                         turn["content"] = result.text
+                        turn['redacted'] = True
             for entity in entities:
                 if flag_removed[entity]:
                     conversations_removed[entity] += 1
-        torch.save(ds, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.redacted.chunk{chunk_idx}.pt')
+        torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.redacted.chunk{chunk_idx}.pt')
     for entity in entities:
         if turns_removed[entity] > 0:
             print (entity, 100*turns_removed[entity]/total_turns, turns_removed[entity], total_turns)

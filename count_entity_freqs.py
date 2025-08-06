@@ -11,7 +11,8 @@ from tqdm import tqdm
 def main(save_name, verbose=True): 
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')] # todo
-    term_freq = collections.defaultdict(collections.Counter)
+    if verbose:
+        term_freq = collections.defaultdict(collections.Counter) # Warning: takes more memory
     document_freq = collections.defaultdict(collections.Counter)
     files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.chunk*.pt')
     # sort by numeric index after “chunk”
@@ -39,19 +40,22 @@ def main(save_name, verbose=True):
                         word = text_to_anonymize[analyzer_result.start:analyzer_result.end]
                         entity = analyzer_result.entity_type
                         word_l = word.strip().lower()
-                        term_freq[entity][word_l] += 1
+                        if verbose:
+                            term_freq[entity][word_l] += 1
                         first_occurence[entity].add(word_l)
             for entity in first_occurence:
                 for word_l in first_occurence[entity]:
                     document_freq[entity][word_l] += 1
 
     print (f'number of conversations: {num_conversations}')
-    freqs = {'term_freq': term_freq, 'document_freq': document_freq}
-    torch.save(freqs, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.entityfreq.pt')
-    fouts = {}
-    dirname = f'entity_freqs/wildchat_{num_conversations}'
-    os.makedirs(dirname, exist_ok=True)
+    freqs = {'document_freq': document_freq}
     if verbose:
+        freqs['term_freq'] = term_freq
+    torch.save(freqs, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.entityfreq.pt')
+    if verbose:
+        fouts = {}
+        dirname = f'entity_freqs/wildchat_{num_conversations}'
+        os.makedirs(dirname, exist_ok=True)
         for entity in term_freq:
             fouts[entity] = codecs.open(os.path.join(dirname, f'{entity}.txt'), 'w', 'utf-8')
         for entity in term_freq:
@@ -67,4 +71,4 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    main(args.save_name)
+    main(args.save_name, verbose=False)
