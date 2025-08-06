@@ -43,10 +43,10 @@ Next, count the number of occurrences of each entity. These statistics will be l
 python count_entity_freqs.py --save_name data/aug1_2025
 ```
 
-Now, remove PII. The current PII removal code is developed iteratively: we check the identified named entities and add / remove rules to identify / deidentify PII. Similarly, we determine thresholds for common entities using an iterative process as well.
+Now, redact PII. The current PII removal code is developed iteratively: we check the identified named entities and add / remove rules to identify / deidentify PII. Similarly, we determine thresholds for common entities using an iterative process as well.
 
 ```
-python remove_PII.py
+python redact_PII.py
 ```
 
 Finally, release data.
