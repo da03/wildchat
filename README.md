@@ -17,7 +17,7 @@ The below code presumes access to the raw MySQL database. It will run the below 
 python process_database.py
 ```
 
-## PII Removal (not cleaned up yet)
+## PII Removal
 
 The PII removal code assumes access to a SLURM-managed GPU cluster and uses distributed computing to process data using multiple GPUs.
 
