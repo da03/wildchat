@@ -660,13 +660,15 @@ def hash_ips(save_name):
         assert set(d.keys()) == set(['model', 'timestamp', 'conversation', 'turn', 'language', 'toxic', 'state', 'country', 'hashed_ip', 'header']), d.keys()
         torch.save(d, f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.chunk{chunk_idx}.pt')
 
-def push_dataset(save_name, after_ip=False):
+def push_dataset(save_name, after_ip=False, is_final=False):
     if save_name.endswith('.pt'):
         save_name = save_name[:-len('.pt')]
-    if not after_ip:
-        files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
-    else:
+    if is_final:
+        files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.presidio.ner.redacted.trufflehog.redacted.final.chunk*.pt')
+    elif after_ip:
         files = glob.glob(f'{save_name}.cacheddict.withlang.rmwildbench.moderations.detoxify.ip.chunk*.pt')
+    else:
+        files = glob.glob(f'{save_name}.cacheddict.withlang.chunk*.pt')
     # sort by numeric index after “chunk”
     def chunk_index(path):
         # this regex finds the digits between “chunk” and “.pt”
@@ -676,8 +678,9 @@ def push_dataset(save_name, after_ip=False):
     filtered_records = []
     cutoff = datetime(2025, 8, 1)  # filter out from Aug 2025 onwards
     # explicit schema for nested structs
-    if not after_ip:
+    if is_final:
         features = Features({
+            'conversation_hash':  Value('string'),
             'model':              Value('string'),
             'timestamp':          Value('timestamp[us]'),
             'conversation':       [Features({
@@ -687,7 +690,11 @@ def push_dataset(save_name, after_ip=False):
                     'accept-language': Value('string'),
                     'user-agent':      Value('string'),
                 }),
-                'ip':               Value('string'),
+                'hashed_ip':               Value('string'),
+                'country':          Value('string'),
+                'toxic':            Value('bool'),
+                'redacted':         Value('bool'),
+                'state':            Value('string'),
                 'language':         Value('string'),
                 'openai_id':        Value('string'),
                 'role':             Value('string'),
@@ -715,15 +722,99 @@ def push_dataset(save_name, after_ip=False):
                 }),
             })],
             'turn':               Value('int64'),
-            'ip':                 Value('string'),
-            'device_fingerprint': Value('string'),
+            'language':           Value('string'),
+            'openai_moderation': [Features({
+                'categories': Features({
+                    'harassment': Value('bool'),
+                    'harassment/threatening': Value('bool'),
+                    'harassment_threatening': Value('bool'),
+                    'hate': Value('bool'),
+                    'hate/threatening': Value('bool'),
+                    'hate_threatening': Value('bool'),
+                    'illicit': Value('bool'),
+                    'illicit/violent': Value('bool'),
+                    'illicit_violent': Value('bool'),
+                    'self-harm': Value('bool'),
+                    'self-harm/instructions': Value('bool'),
+                    'self-harm/intent': Value('bool'),
+                    'self_harm': Value('bool'),
+                    'self_harm_instructions': Value('bool'),
+                    'self_harm_intent': Value('bool'),
+                    'sexual': Value('bool'),
+                    'sexual/minors': Value('bool'),
+                    'sexual_minors': Value('bool'),
+                    'violence': Value('bool'),
+                    'violence/graphic': Value('bool'),
+                    'violence_graphic': Value('bool')
+                }),
+                'category_applied_input_types': Features({
+                    'harassment': [Value('string')],
+                    'harassment/threatening': [Value('string')],
+                    'harassment_threatening': [Value('string')],
+                    'hate': [Value('string')],
+                    'hate/threatening': [Value('string')],
+                    'hate_threatening': [Value('string')],
+                    'illicit': [Value('string')],
+                    'illicit/violent': [Value('string')],
+                    'illicit_violent': [Value('string')],
+                    'self-harm': [Value('string')],
+                    'self-harm/instructions': [Value('string')],
+                    'self-harm/intent': [Value('string')],
+                    'self_harm': [Value('string')],
+                    'self_harm_instructions': [Value('string')],
+                    'self_harm_intent': [Value('string')],
+                    'sexual': [Value('string')],
+                    'sexual/minors': [Value('string')],
+                    'sexual_minors': [Value('string')],
+                    'violence': [Value('string')],
+                    'violence/graphic': [Value('string')],
+                    'violence_graphic': [Value('string')],
+                }),
+                'category_scores': Features({
+                    'harassment': Value('float64'),
+                    'harassment/threatening': Value('float64'),
+                    'harassment_threatening': Value('float64'),
+                    'hate': Value('float64'),
+                    'hate/threatening': Value('float64'),
+                    'hate_threatening': Value('float64'),
+                    'illicit': Value('float64'),
+                    'illicit/violent': Value('float64'),
+                    'illicit_violent': Value('float64'),
+                    'self-harm': Value('float64'),
+                    'self-harm/instructions': Value('float64'),
+                    'self-harm/intent': Value('float64'),
+                    'self_harm': Value('float64'),
+                    'self_harm_instructions': Value('float64'),
+                    'self_harm_intent': Value('float64'),
+                    'sexual': Value('float64'),
+                    'sexual/minors': Value('float64'),
+                    'sexual_minors': Value('float64'),
+                    'violence': Value('float64'),
+                    'violence/graphic': Value('float64'),
+                    'violence_graphic': Value('float64'),
+                }),
+                'flagged': Value('bool'),
+            })],
+            'detoxify_moderation': [Features({
+                'identity_attack': Value('float64'),
+                'insult': Value('float64'),
+                'obscene': Value('float64'),
+                'severe_toxicity': Value('float64'),
+                'sexual_explicit': Value('float64'),
+                'threat': Value('float64'),
+                'toxicity': Value('float64'),
+            })],
+            'toxic':          Value('bool'),
+            'redacted':          Value('bool'),
+            'state':          Value('string'),
+            'country':          Value('string'),
+            'hashed_ip':          Value('string'),
             'header':             Features({
                 'accept-language': Value('string'),
                 'user-agent':      Value('string'),
             }),
-            'language':           Value('string'),
         })
-    else:
+    elif after_ip:
         features = Features({
             'model':              Value('string'),
             'timestamp':          Value('timestamp[us]'),
@@ -856,6 +947,53 @@ def push_dataset(save_name, after_ip=False):
             }),
             'language':           Value('string'),
         })
+    else:
+        features = Features({
+            'model':              Value('string'),
+            'timestamp':          Value('timestamp[us]'),
+            'conversation':       [Features({
+                'content':          Value('string'),
+                'created':          Value('int64'),
+                'header':           Features({
+                    'accept-language': Value('string'),
+                    'user-agent':      Value('string'),
+                }),
+                'ip':               Value('string'),
+                'language':         Value('string'),
+                'openai_id':        Value('string'),
+                'role':             Value('string'),
+                'temperature':      Value('float64'),
+                'timestamp':        Value('timestamp[us]'),
+                'token_counter':    Value('int64'),
+                'top_p':            Value('float64'),
+                'turn_identifier':  Value('int64'),
+                'system_fingerprint': Value('string'),
+                'usage': Features({
+                    'completion_tokens':         Value('int64'),
+                    'completion_tokens_details': Features({
+                        'reasoning_tokens': Value('int64'),
+                        'text_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                        'accepted_prediction_tokens': Value('int64'),
+                        'rejected_prediction_tokens': Value('int64')
+                    }),
+                    'prompt_tokens':             Value('int64'),
+                    'total_tokens':              Value('int64'),
+                    'prompt_tokens_details': Features({
+                        'cached_tokens': Value('int64'),
+                        'audio_tokens': Value('int64'),
+                    }),
+                }),
+            })],
+            'turn':               Value('int64'),
+            'ip':                 Value('string'),
+            'device_fingerprint': Value('string'),
+            'header':             Features({
+                'accept-language': Value('string'),
+                'user-agent':      Value('string'),
+            }),
+            'language':           Value('string'),
+        })
 
     print("Loading and filtering records...")
     def record_generator():
@@ -894,15 +1032,39 @@ def push_dataset(save_name, after_ip=False):
 
     # 3) ensure the repo exists, then push the full shards
     repo_size_str = f"{len(ds)/1e6:.1f}M"
-    if not after_ip:
-        repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+
+    if is_final: # remove minors
+        def no_minors(example):
+            # openai_moderation is a list (one per turn or per input type)
+            for mod in example["openai_moderation"]:
+                cats = mod.get("categories")
+                if cats is None:
+                    continue
+                if cats.get("sexual/minors") or cats.get("sexual_minors"):
+                    return False
+            return True
+        ds = ds.filter(no_minors, desc="Filtering minors")
+        print ('size of full version', len(ds))
+        repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full"
+        ds.push_to_hub(repo_id, split='train', private=True)
+        print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
+
+        # non-toxic version
+        ds = ds.filter(lambda ex: not ex["toxic"], desc="Filtering toxic")
+        repo_id = f"yuntian-deng/WildChat-{repo_size_str}"
+        print ('size of non toxic version', len(ds))
+        ds.push_to_hub(repo_id, split='train', private=True)
+        print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
     else:
-        repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Processed-Internal"
-    #repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
-    create_repo(repo_id, repo_type="dataset", exist_ok=True)
-    ## Push to Hugging Face
-    ds.push_to_hub(repo_id, split='train')
-    print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
+        if not after_ip:
+            repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full-Internal"
+        else:
+            repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Processed-Internal"
+        #repo_id = "yuntian-deng/WildChat-4M-Full-Internal"
+        #create_repo(repo_id, repo_type="dataset", exist_ok=True)
+        ## Push to Hugging Face
+        ds.push_to_hub(repo_id, split='train', private=True)
+        print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
 
     
 def add_languages(save_name):

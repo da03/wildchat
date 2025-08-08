@@ -49,8 +49,14 @@ Now, redact PII. The current PII removal code is developed iteratively: we check
 python redact_PII.py --save_name data/aug1_2025
 ```
 
+Next, use TruffleHog to remove API keys.
+
+```
+python redact_trufflehog.py --save_name data/aug1_2025
+```
+
 Finally, release data.
 
 ```
-python release_wildchat_1m.py
+python release.py --save_name data/aug1_2025
 ```
