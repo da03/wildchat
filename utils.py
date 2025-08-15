@@ -1046,12 +1046,14 @@ def push_dataset(save_name, after_ip=False, is_final=False):
         ds = ds.filter(no_minors, desc="Filtering minors")
         print ('size of full version', len(ds))
         repo_id = f"yuntian-deng/WildChat-{repo_size_str}-Full"
+        repo_id = f"allenai/WildChat-{repo_size_str}-Full"
         ds.push_to_hub(repo_id, split='train', private=True)
         print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
 
         # non-toxic version
         ds = ds.filter(lambda ex: not ex["toxic"], desc="Filtering toxic")
         repo_id = f"yuntian-deng/WildChat-{repo_size_str}"
+        repo_id = f"allenai/WildChat-{repo_size_str}"
         print ('size of non toxic version', len(ds))
         ds.push_to_hub(repo_id, split='train', private=True)
         print(f"✅ Full dataset pushed to https://hf.co/{repo_id}")
